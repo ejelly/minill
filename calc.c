@@ -50,7 +50,7 @@ static struct prec_table op_prec_table[] = {
   { 0, FALSE },
   { 0, FALSE },
   { 0, FALSE },
-  { 1, TRUE },
+  { 0, FALSE },
   { 0, FALSE },
   { 0, FALSE },
   { 0, FALSE },
