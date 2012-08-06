@@ -6,8 +6,6 @@
 
 struct token_param {
   char const * const string;
-  int op_prec;
-  int op_right_assoc;
 };
 
 enum token {
@@ -27,20 +25,35 @@ enum token {
 };
 
 static struct token_param token_params[] = {
-  { "EOF", 0, FALSE },
-  { "+", 2, FALSE },
-  { "-", 2, FALSE },
-  { "*", 3, FALSE },
-  { "/", 3, FALSE },
-  { "(", 0, FALSE },
-  { ")", 0, FALSE },
-  { ";", 0, FALSE },
-  { "=", 1, TRUE },
-  { "IDENT", 0, FALSE },
-  { "NUM", 0, FALSE },
-  { "STRING", 0, FALSE },
+  { "EOF" },
+  { "+" },
+  { "-" },
+  { "*" },
+  { "/" },
+  { "(" },
+  { ")" },
+  { ";" },
+  { "=" },
+  { "IDENT" },
+  { "NUM" },
+  { "STRING" },
 
-  { NULL, 0, FALSE }
+  { NULL }
+};
+
+static struct prec_table op_prec_table[] = {
+  { 0, FALSE },
+  { 2, FALSE },
+  { 2, FALSE },
+  { 3, FALSE },
+  { 3, FALSE },
+  { 0, FALSE },
+  { 0, FALSE },
+  { 0, FALSE },
+  { 1, TRUE },
+  { 0, FALSE },
+  { 0, FALSE },
+  { 0, FALSE },
 };
 
 static const char * const id_start =
@@ -81,7 +94,7 @@ static int tmatch (const char *p, int token, const char **np) {
   return TRUE;
 }
 
-static int next_token (const char **cp, union tval_t *tval) {
+int next_token (const char **cp, union tval_t *tval) {
   const char *start;
 
   if (!**cp)
@@ -122,7 +135,6 @@ static int next_token (const char **cp, union tval_t *tval) {
   return T_EOF;
 }
 
-
 // Parser
 
 struct attr {
@@ -130,14 +142,45 @@ struct attr {
   int rolling;
 };
 
-static void init_synth(struct attr *attr) {
+struct attr *new_attr (void) {
+  return malloc(sizeof(struct attr));
+}
+
+void del_attr (struct attr *attr) {
+  free(attr);
+}
+
+void init_synth (struct attr *attr) {
   attr->value = 0;
   attr->rolling = 0;
 }
 
-static void copy_chained(struct attr * const from,
-                         struct attr * to) {
+void copy_chained (struct attr * const from,
+                          struct attr * to) {
   to->rolling = from->rolling;
+}
+
+
+static int compute_op (int op, struct attr *left, struct attr *right) {
+    switch(op) {
+    case T_PLUS:
+      left->value += right->value;
+      break;
+    case T_MINUS:
+      left->value -= right->value;
+      break;
+    case T_MUL:
+      left->value *= right->value;
+      break;
+    case T_DIV:
+      left->value /= right->value;
+      break;
+    default:
+      fprintf(stderr, "unimplemented op\n");
+      return FALSE;
+    }
+
+    return TRUE;
 }
 
 RULEDEC(block);
@@ -145,18 +188,15 @@ RULEDEC(stmt);
 
 RULEDEC(assign);
 
-RULEDEC(expr);
-RULEDEC(paren_term);
-RULEDEC(sum);
-RULEDEC(sum_tail);
-RULEDEC(product);
-RULEDEC(product_tail);
 RULEDEC(atom);
 
+RULEDEC(paren_term);
 RULEDEC(unary_minus);
 
 RULEDEC(num);
 RULEDEC(var);
+
+PCDEC(expr, atom, op_prec_table, compute_op);
 
 RULEDEF(block, {
     CHILD(block_stmts);
@@ -195,97 +235,14 @@ RULEDEF(assign, {
     printf("assigning %i to %s\n", rvalue.value, ident);
   })
 
-RULEDEF(expr, {
-    CHILD(top);
-
-    invoke(sum, top);
-
-    self->value = top.value;
-  })
-
 RULEDEF(paren_term, {
     CHILD(term_sum);
 
     expect(T_OPEN);
-    invoke(sum, term_sum);
+    invoke(expr, term_sum);
     expect(T_CLOSE);
 
     self->value = term_sum.value;
-  })
-
-RULEDEF(sum, {
-    CHILD(first);
-    CHILD(tail);
-
-    invoke(product, first);
-
-    self->rolling = first.value;
-
-    try(sum_tail, tail);
-
-    self->value = self->rolling;
-  })
-
-RULEDEF(sum_tail, {
-    CHILD(summand);
-    CHILD(tail);
-
-    int current = self->rolling;
-
-    enum token t;
-
-    switch (t = next()) {
-    case T_PLUS:
-    case T_MINUS:
-      invoke(product, summand);
-      self->rolling = current +
-        (t == T_MINUS ? -summand.value : summand.value);
-      break;
-
-    default:
-      fail;
-    }
-
-    try(sum_tail, tail);
-  })
-
-RULEDEF(product, {
-    CHILD(first);
-    CHILD(tail);
-
-    invoke(atom, first);
-
-    self->rolling = first.value;
-
-    try(product_tail, tail);
-
-    self->value = self->rolling;
-  })
-
-RULEDEF(product_tail, {
-    CHILD(factor);
-    CHILD(tail);
-
-    int current = self->rolling;
-
-    enum token t;
-    switch (t = next()) {
-    case T_MUL:
-    case T_DIV:
-
-      invoke(atom, factor);
-
-      if (t == T_MUL)
-        self->rolling = current * factor.value;
-      else
-        self->rolling = current / factor.value;
-
-      break;
-    default:
-      fail;
-    }
-
-    try(product_tail, tail);
   })
 
 RULEDEF(atom, {
@@ -318,55 +275,6 @@ RULEDEF(unary_minus, {
     self->value = -value.value;
   })
 
-int compute_op (int op, int left, int right) {
-    switch(op) {
-    case T_PLUS:
-      return left + right;
-    case T_MINUS:
-      return left - right;
-    case T_MUL:
-      return left * right;
-    case T_DIV:
-      return left / right;
-    }
-
-    fprintf(stderr, "unimplemented op\n");
-    return left;
-}
-
-int compute (char const **cp, int min_prec) {
-  struct debug_tree dtree;
-  struct attr atom;
-
-  if (!parse_atom(cp, &atom, &dtree)) {
-    fprintf(stderr, "could not evaluate atom\n");
-    return 0;
-  }
-
-  int value = atom.value;
-
-  while (TRUE) {
-    char const * p = *cp;
-    union tval_t token_val;
-    int token = next_token(&p, &token_val);
-
-    int prec = token_params[token].op_prec;
-    int right_assoc = token_params[token].op_right_assoc;
-
-    if (prec < min_prec)
-      break;
-
-    *cp = p;
-    int rhs = compute(cp, prec + (right_assoc ? 0 : 1));
-    if (*cp == p) // no advancement
-      break;
-
-    value = compute_op(token, value, rhs);
-  };
-
-  return value;
-}
-
 int main (int argc, char *argv[]) {
 
   if (argc != 2) {
@@ -387,9 +295,6 @@ int main (int argc, char *argv[]) {
   // output_dtree(dtree);
 
   printf("block value: %i\n", attr.value);
-
-  cp = argv[1];
-  printf("precedence climbing: %i\n", compute(&cp, 1));
 
   return 0;
 }

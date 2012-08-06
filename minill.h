@@ -10,10 +10,12 @@
 union tval_t;
 struct attr;
 
-static int next_token (const char **cp, union tval_t *tval);
+int next_token (const char **cp, union tval_t *tval);
 
-static void init_synth(struct attr *attr);
-static void copy_chained(struct attr * const from, struct attr *to);
+struct attr *new_attr(void);
+void del_attr(struct attr *attr);
+void init_synth(struct attr *attr);
+void copy_chained(struct attr * const from, struct attr *to);
 
 // hackishly print out an AST.
 
@@ -30,7 +32,7 @@ static void ind(void) {
       printf(" ");
 }
 
-void output_dtree(struct debug_tree dtree) {
+static void output_dtree(struct debug_tree dtree) {
   if (!dtree.ret)
     return;
 
@@ -117,36 +119,30 @@ int mock_until_semi (const char **, struct debug_tree *);
 
 // work horses for the combinators above.
 
-static int try_ (int (*parser)(const char **, struct attr *,
+int try_ (int (*parser)(const char **, struct attr *,
                         struct debug_tree *),
           const char **pp, struct debug_tree *dtree, int *dcnum,
-          struct attr *attr, struct attr *self) {
+          struct attr *attr, struct attr *self);
 
-  dtree->child[*dcnum] = malloc(sizeof(struct debug_tree));
+int consume_ (int token, union tval_t *tval, const char **pp);
 
-  init_synth(attr);
-  copy_chained(self, attr);
-  int r =  parser(pp, attr, dtree->child[(*dcnum)++]);
+struct prec_table {
+  int prec;
+  int right_assoc;
+};
 
-  if (r)
-    copy_chained(attr, self);
+int pc_compute (char const **cp, struct attr *value, struct debug_tree *dtree,
+                int (*parse_atom)(char const **, struct attr *,
+                                  struct debug_tree *),
+                int (*compute_op)(int, struct attr*, struct attr*),
+                struct prec_table const * const table,
+                int min_prec);
 
-  return r;
-}
-
-static int consume_ (int token, union tval_t *tval, const char **pp) {
-  int rtoken;
-  if ((rtoken = next_token(pp, tval)) != token) { 
-    /*
-    ind();
-    printf("%s instead of %s\n",
-           token_strings[rtoken],
-           token_strings[token]);
-    */
-    return FALSE;
+// define a new rule.
+#define PCDEC(rule,atom,compute_op,table)                               \
+  inline static int parse_##rule (const char **cp, struct attr *self,   \
+                           struct debug_tree *dtree) {                  \
+    return pc_compute(cp, self, dtree, parse_##atom, table, compute_op, 1); \
   }
-
-  return TRUE;
-}
 
 #endif /* MINILL_H */
