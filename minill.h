@@ -10,8 +10,6 @@
 union tval_t;
 struct attr;
 
-static char const * const token_strings[];
-
 static int next_token (const char **cp, union tval_t *tval);
 
 static void init_synth(struct attr *attr);

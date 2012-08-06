@@ -4,6 +4,12 @@
 
 #include "minill.h"
 
+struct token_param {
+  char const * const string;
+  int op_prec;
+  int op_right_assoc;
+};
+
 enum token {
   T_EOF = 0,
 
@@ -20,23 +26,22 @@ enum token {
   T_IDENT, T_CONSTANT, T_STRING
 };
 
-static char const * const token_strings[] = {
-  "EOF",
+static struct token_param token_params[] = {
+  { "EOF", 0, FALSE },
+  { "+", 2, FALSE },
+  { "-", 2, FALSE },
+  { "*", 3, FALSE },
+  { "/", 3, FALSE },
+  { "(", 0, FALSE },
+  { ")", 0, FALSE },
+  { ";", 0, FALSE },
+  { "=", 1, TRUE },
+  { "IDENT", 0, FALSE },
+  { "NUM", 0, FALSE },
+  { "STRING", 0, FALSE },
 
-  // operators
-  "+", "-", "*", "/",
-
-  // parens
-  "(", ")",
-
-  // semicolon
-  ";", "=",
-
-  // ident, literals
-  "IDENT", "NUM", "STRING"
+  { NULL, 0, FALSE }
 };
-
-static const int token_snum = 12;
 
 static const char * const id_start =
   "_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -60,7 +65,10 @@ static void overread_ws (const char **cp) {
 
 static int tmatch (const char *p, int token, const char **np) {
   const char *q = *np = p;
-  const char *t = token_strings[token];
+  const char *t = token_params[token].string;
+
+  if (!t)
+    return FALSE;
 
   while (*t)
     if (*(q++) != *(t++))
@@ -84,7 +92,7 @@ static int next_token (const char **cp, union tval_t *tval) {
   // keyword or operator
 
   int i;
-  for (i = 1; i < token_snum; i++)
+  for (i = 0; token_params[i].string; i++)
     if (tmatch(*cp, i, cp))
       return i;
 
@@ -110,7 +118,7 @@ static int next_token (const char **cp, union tval_t *tval) {
 
   // unknown: bail
 
-  printf("unknown rest: '%s'\n", *cp);
+  fprintf(stderr, "unknown rest: '%s'\n", *cp);
   return T_EOF;
 }
 
@@ -143,7 +151,7 @@ RULEDEC(sum);
 RULEDEC(sum_tail);
 RULEDEC(product);
 RULEDEC(product_tail);
-RULEDEC(product_factor);
+RULEDEC(atom);
 
 RULEDEC(unary_minus);
 
@@ -201,8 +209,8 @@ RULEDEF(paren_term, {
     expect(T_OPEN);
     invoke(sum, term_sum);
     expect(T_CLOSE);
-    
-    self->value = term_sum.value;    
+
+    self->value = term_sum.value;
   })
 
 RULEDEF(sum, {
@@ -245,7 +253,7 @@ RULEDEF(product, {
     CHILD(first);
     CHILD(tail);
 
-    invoke(product_factor, first);
+    invoke(atom, first);
 
     self->rolling = first.value;
 
@@ -263,10 +271,15 @@ RULEDEF(product_tail, {
     enum token t;
     switch (t = next()) {
     case T_MUL:
+    case T_DIV:
 
-      invoke(product_factor, factor);
+      invoke(atom, factor);
 
-      self->rolling = current * factor.value;
+      if (t == T_MUL)
+        self->rolling = current * factor.value;
+      else
+        self->rolling = current / factor.value;
+
       break;
     default:
       fail;
@@ -275,7 +288,7 @@ RULEDEF(product_tail, {
     try(product_tail, tail);
   })
 
-RULEDEF(product_factor, {
+RULEDEF(atom, {
     CHILD(node);
 
     choose;
@@ -301,9 +314,58 @@ RULEDEF(var, {
 RULEDEF(unary_minus, {
     CHILD(value);
     expect(T_MINUS);
-    invoke(product_factor, value);
+    invoke(atom, value);
     self->value = -value.value;
   })
+
+int compute_op (int op, int left, int right) {
+    switch(op) {
+    case T_PLUS:
+      return left + right;
+    case T_MINUS:
+      return left - right;
+    case T_MUL:
+      return left * right;
+    case T_DIV:
+      return left / right;
+    }
+
+    fprintf(stderr, "unimplemented op\n");
+    return left;
+}
+
+int compute (char const **cp, int min_prec) {
+  struct debug_tree dtree;
+  struct attr atom;
+
+  if (!parse_atom(cp, &atom, &dtree)) {
+    fprintf(stderr, "could not evaluate atom\n");
+    return 0;
+  }
+
+  int value = atom.value;
+
+  while (TRUE) {
+    char const * p = *cp;
+    union tval_t token_val;
+    int token = next_token(&p, &token_val);
+
+    int prec = token_params[token].op_prec;
+    int right_assoc = token_params[token].op_right_assoc;
+
+    if (prec < min_prec)
+      break;
+
+    *cp = p;
+    int rhs = compute(cp, prec + (right_assoc ? 0 : 1));
+    if (*cp == p) // no advancement
+      break;
+
+    value = compute_op(token, value, rhs);
+  };
+
+  return value;
+}
 
 int main (int argc, char *argv[]) {
 
@@ -325,6 +387,9 @@ int main (int argc, char *argv[]) {
   // output_dtree(dtree);
 
   printf("block value: %i\n", attr.value);
+
+  cp = argv[1];
+  printf("precedence climbing: %i\n", compute(&cp, 1));
 
   return 0;
 }
